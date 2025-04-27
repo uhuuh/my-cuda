@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <string>
+#include <unistd.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
@@ -18,6 +20,14 @@ using namespace std;
 }while(0)
 
 #define i2(mat, col, i, j) mat[(i) * (col) + (j)]
+#define itx threadIdx.x
+#define ity threadIdx.y
+#define ibx blockIdx.x
+#define iby blockIdx.y
+#define dgx gridDim.x
+#define dgy gridDim.y
+#define ddx blockDim.x
+#define ddy blockDim.y
 
 const bool debug = true;
 
@@ -25,7 +35,8 @@ struct Mat {
     float* h = nullptr;
     float* d = nullptr;
     int m = 0, n = 0;
-    Mat(int m, int n): m(m), n(n) {
+    string name;
+    Mat(const string &name, int m, int n): name(name), m(m), n(n) {
         h = (float*)malloc(get_size());
         cuda_check(cudaMalloc((void**)&d, get_size()));
     }
@@ -41,6 +52,11 @@ struct Mat {
         }
     }
     void print() {
+        return;
+
+        int saved_stdout = dup(STDOUT_FILENO); 
+        freopen(name.c_str(), "w", stdout);
+
         printf("-------------------> mat %p [%d %d]\n", this, m, n);
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j < n; ++j) {
@@ -49,6 +65,9 @@ struct Mat {
             printf("\n");
         }
         printf("\n");
+
+        dup2(saved_stdout, STDOUT_FILENO);  // 还原 stdout
+        close(saved_stdout);                // 关闭备份的描述符
     }
     int get_size() {
         return m * n * sizeof(float);
@@ -79,22 +98,21 @@ void matmul(int m, int n, int k, float* A, float* B, float* C) {
     //printf("[%d %d] [%d %d]\n", blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y);
 
     const int tile_size = 32;
-    A = A + blockIdx.x * tile_size * n + blockIdx.y * tile_size; 
-    B = B + blockIdx.x * tile_size * n + blockIdx.y * tile_size; 
+    A = A + blockIdx.x * tile_size * k;
+    B = B + blockIdx.y * tile_size; 
     C = C + blockIdx.x * tile_size * n + blockIdx.y * tile_size; 
 
     float a = 0;
-    for (int k = 0; k < tile_size; ++k) {
-        a += i2(A, k, threadIdx.x, k) * i2(B, n, k, threadIdx.y);
+    for (int z = 0; z < k; ++z) {
+        a += i2(A, k, threadIdx.x, z) * i2(B, n, z, threadIdx.y);
+        // if (debug && ibx == 0 && iby == 1 && itx == 0 && ity == 0) {
+        //     printf("A %d %d %f\n", threadIdx.x, z, i2(A, k, threadIdx.x, z));
+        //     printf("B %d %d %f\n", z, threadIdx.y, i2(B, n, z, threadIdx.y));
+        //     printf("%f\n", a);
+        // }
     }
-    i2(C, m, threadIdx.x, threadIdx.y) = a;
-    for (int k = 0; k < tile_size; ++k) {
-        a += i2(A, k, threadIdx.x, k) * i2(B, n, k, threadIdx.y);
-    }
-    for (int k = 0; k < tile_size; ++k) {
-        a += i2(A, k, threadIdx.x, k) * i2(B, n, k, threadIdx.y);
-    }
-    printf("%d %d -> %f\n", threadIdx.x, threadIdx.y, a);
+    i2(C, n, threadIdx.x, threadIdx.y) = a;
+    // printf("%d %d -> %f\n", threadIdx.x, threadIdx.y, a);
 }
 
 void check(Mat* A, Mat* B, Mat* C) {
@@ -108,7 +126,8 @@ void check(Mat* A, Mat* B, Mat* C) {
             }
             // if (a != i2(C->h, C->n, i, j)) {
             float diff = a - i2(C->h, C->n, i, j);
-            if (abs(diff) > 0.001) {
+            // if (a == i2(C->h, C->n, i, j)) {
+            if (abs(diff) > 0.0001) {
                 // A->print();
                 // B->print();
                 // C->print();
@@ -125,23 +144,50 @@ void check(Mat* A, Mat* B, Mat* C) {
     }
 }
 
-const int m = 32;
-const int n = 32;
-const int k = 32;
+
+const int m = 6400;
+const int n = 6400;
+const int k = 6400;
+
+struct Timer {
+    cudaEvent_t begin, end;
+    Timer() {
+        cuda_check(cudaEventCreate(&begin));
+        cuda_check(cudaEventCreate(&end));
+        cudaEventRecord(begin);
+    }
+    ~Timer() {
+        cudaEventRecord(end);
+        cudaEventSynchronize(begin);
+        cudaEventSynchronize(end);
+
+        float time = 0;
+        cudaEventElapsedTime(&time, begin, end);
+        printf("time=%f ms, gfloats=%f\n", time, m * n * k * 2.0 * 1e-9 / time);
+
+        cudaEventDestroy(begin);
+        cudaEventDestroy(end);
+    }
+};
 
 int main() {
     srand(42);
 
-    Mat A(m, k);
-    Mat B(k, n);
-    Mat C(m, n);
+    Mat A("A", m, k);
+    Mat B("B", k, n);
+    Mat C("C", m, n);
     A.init();
     B.init();
-    A.move(true); 
+    A.move(true);
     B.move(true);
 
-    matmul<<<dim3(m / 32, n / 32), dim3(32, 32)>>>(m, n, k, (float*)A.d, (float*)B.d, (float*)C.d);
-    cudaDeviceSynchronize();
+    {
+        Timer t;
+        cudaDeviceSynchronize();
+        matmul<<<dim3(m / 32, n / 32), dim3(32, 32)>>>(m, n, k, (float*)A.d, (float*)B.d, (float*)C.d);
+        cudaDeviceSynchronize();
+    }
+
 
     C.move(false);
     check(&A, &B, &C);
