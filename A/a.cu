@@ -20,6 +20,8 @@ using namespace std;
 }while(0)
 
 #define i2(mat, col, i, j) mat[(i) * (col) + (j)]
+#define i4(mat, x, y, a, b) mat[(x) * (a) + (y) * (b)]
+
 #define itx threadIdx.x
 #define ity threadIdx.y
 #define ibx blockIdx.x
@@ -113,6 +115,32 @@ void matmul(int m, int n, int k, float* A, float* B, float* C) {
     }
     i2(C, n, threadIdx.x, threadIdx.y) = a;
     // printf("%d %d -> %f\n", threadIdx.x, threadIdx.y, a);
+}
+
+__global__
+void matmul_v2(int m, int n, int k, float* A, float* B, float* C) {
+     const int tile = 32;
+     float* A_chip = NULL;
+     float* B_chip = NULL;
+     float* C_chip = $i4(C, ibx, iby, tile * n, tile);
+     __shared__ float A_buf[tile * tile];
+     __shared__ float B_buf[tile * tile];
+     __shared__ float C_buf[tile * tile];
+
+     for (int z_chip = 0; z_chip * tile < k; ++z_chip) {
+         A_chip = &i4(A, ibx, z_chip, tile * k, tile);
+         B_chip = &i4(B, z_chip, iby, tile * n, tile);
+         i4(A_buf, itx, ity, tile, 1) = i4(A_chip, itx, ity, k, 1);
+         i4(B_buf, itx, ity, tile, 1) = i4(B_chip, itx, ity, n, 1);
+         __syncthreads();
+         float a = 0;
+         for (int z = 0; z < tile; +=z) {
+             a += i4(A_buf, itx, z, tile, 1) * i4(B_buf, z, ity, tile, 1);
+         }
+         i4(C_buf, itx, ity, tile, 1) += a;
+         __syncthreads();
+     }
+     i4(C_chip, itx, ity, n, 1) = i4(C_buf, itx, ity, tile, 1);
 }
 
 void check(Mat* A, Mat* B, Mat* C) {
