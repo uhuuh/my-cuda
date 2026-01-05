@@ -1,3 +1,7 @@
-build
 .cache
+.idea
 .vacode
+build/
+cmake-build-debug/
+cmake-build-debug-wsl/
+**/*.out
