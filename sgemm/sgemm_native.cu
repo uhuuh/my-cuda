@@ -1,4 +1,4 @@
-#include <cuda.h>
+#include <cuda_runtime.h>
 
 
 __device__

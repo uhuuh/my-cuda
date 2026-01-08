@@ -1,9 +1,20 @@
-cmake_minimum_required(VERSION 3.10)
-#set(CMAKE_CUDA_ARCHITECTURES "native")
-set(CMAKE_CUDA_ARCHITECTURES "120")
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-12.8/bin/nvcc")
-project(bird VERSION 0.1 LANGUAGES CUDA CXX C)
-find_package(CUDAToolkit REQUIRED)
-add_subdirectory(sgemm)
-add_subdirectory(memory)
+cmake_minimum_required(VERSION 3.18)
 
+project(cuda_only_project LANGUAGES CUDA)
+
+include_directories(
+        /mnt/c/Users/uh/code/work/1220-op/cutlass/include
+        /root/miniconda3/envs/py312/lib/python3.12/site-packages/torch/include/
+        /root/miniconda3/envs/py312/lib/python3.12/site-packages/torch/include/torch/csrc/api/include
+)
+
+file(GLOB_RECURSE CUDA_SOURCES
+        CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/*.cu
+)
+
+add_library(cuda_kernels STATIC ${CUDA_SOURCES})
+
+set_target_properties(cuda_kernels PROPERTIES
+        CUDA_ARCHITECTURES native
+)
