@@ -1,0 +1,22 @@
+
+
+为了方便处理带batch维度的tensor，在linear中一般是x乘上w
+
+cublas输入都是列主序存储，如果要计算a @ b，则实际调用gemm传入b和a
+
+cutlass支持shape和stride, 不支持step, 因为step可以吸收到stride中
+
+输入A, B, C, alpha, beta, M, N, K, 其中A是M*K, B是K*N, C是M*N, ABC都使用列主序存储, 计算C = alpha * A @ B + beta * C
+
+- native: grid(M / 16, N / 16) block(16, 16) 每个thread计算C中一个位置的最终值
+- smem_cache: grid(M / 16, N / 16) block(16, 16) 每个block维护一个在smem上的tile, 减少gmem加载次数
+- rmem_cache: grid(M / 256, N / 256) block(4, 4)
+- mem_coalesce:
+- vector_memory_access
+- double buffer
+- wmma
+- mma
+- cutlass
+- triton
+- tilelang
+
