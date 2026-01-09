@@ -20,3 +20,9 @@ cutlass支持shape和stride, 不支持step, 因为step可以吸收到stride中
 - triton
 - tilelang
 
+## 调试工具
+- Compute Sanitizer
+- cuda gdb
+- printf
+
+

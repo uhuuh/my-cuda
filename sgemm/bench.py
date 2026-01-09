@@ -2,6 +2,7 @@
 import os
 import time
 import torch
+from IPython.core.completer import context_matcher
 from torch.utils.cpp_extension import load
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -31,6 +32,10 @@ os.makedirs(build_dir, exist_ok=True)
 cc_major, cc_minor = torch.cuda.get_device_capability()
 os.environ["TORCH_CUDA_ARCH_LIST"] = f"{cc_major}.{cc_minor}"
 
+compile_cflags = ["-O3"]
+if True:
+    compile_cflags.extend(["-g", "-G", "-lineinfo"])
+
 # 动态编译CUDA算子
 sgemm_module = load(
     name="sgemm_smem_cache",
@@ -38,12 +43,12 @@ sgemm_module = load(
     build_directory=build_dir,
     verbose=True,
     is_python_module=False,
-    extra_cuda_cflags=["-O3", '-lineinfo'],
+    extra_cuda_cflags=compile_cflags,
 )
 
 def test_performance():
     # 配置测试参数
-    M, K, N = 2048, 2048, 2048
+    M, K, N = 1024, 512, 2048
     device = torch.device('cuda')
 
     # 生成随机测试数据
