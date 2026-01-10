@@ -30,24 +30,29 @@ def cuda_timer():
 # ===============================
 _OP_CACHE = {}
 
-def load_sgemm_op(op_type: str):
+def load_sgemm_op(op_type: str, debug=False):
     if op_type in _OP_CACHE:
         return _OP_CACHE[op_type]
-
-    build_dir = os.path.join(os.getcwd(), "build", op_type)
-    os.makedirs(build_dir, exist_ok=True)
 
     cc_major, cc_minor = torch.cuda.get_device_capability()
     os.environ["TORCH_CUDA_ARCH_LIST"] = f"{cc_major}.{cc_minor}"
 
+    build_root = os.path.join(os.getcwd(), "build")
+    build_subdir_name = (
+        f"sgemm_op={op_type}___"
+        f"debug={int(debug)}___"
+    )
+    build_dir = os.path.join(build_root, build_subdir_name)
+    os.makedirs(build_dir, exist_ok=True)
+
+    extra_cuda_cflags = ["-O3", "-lineinfo"] if debug else ["-O0", "-lineinfo", "-G", "-g"]
     load(
         name=f"sgemm_{op_type}",
         sources=[f"sgemm_{op_type}.cu"],
         build_directory=build_dir,
         verbose=True,
         is_python_module=False,
-        extra_cuda_cflags=["-O3", "-lineinfo"],
-        # extra_cuda_cflags=["-O0", "-lineinfo", "-G", "-g"],
+        extra_cuda_cflags=extra_cuda_cflags,
     )
 
     op = getattr(torch.ops.my, f"sgemm_{op_type}")
@@ -102,27 +107,6 @@ def benchmark_shape(op, M, K, N, warmup=5, samples=20):
         "custom": stats(custom_times),
     }
 
-
-# ===============================
-# Benchmark group
-# ===============================
-def benchmark_group(op, group_name, shapes):
-    results = {
-        "torch":  {"x": [], "mean": [], "min": [], "max": []},
-        "custom": {"x": [], "mean": [], "min": [], "max": []},
-    }
-
-    for M, K, N in tqdm(shapes, desc=group_name, leave=False):
-        r = benchmark_shape(op, M, K, N)
-        for impl in ("torch", "custom"):
-            results[impl]["x"].append(r["gflops"])
-            results[impl]["mean"].append(r[impl]["mean"])
-            results[impl]["min"].append(r[impl]["min"])
-            results[impl]["max"].append(r[impl]["max"])
-
-    return results
-
-
 # ===============================
 # Plot: ONE FIGURE, MULTI SUBPLOTS
 # ===============================
@@ -161,22 +145,44 @@ def plot_all_groups(all_results):
 # ===============================
 # Shapes (ALL POWERS OF TWO)
 # ===============================
-GROUPS = {
-    "Square GEMM": [
-        # (4, 4, 4),
-        (2048, 2048, 2048),
-        (4096, 4096, 4096),
-        (8192, 8192, 8192),
-    ],
-    "M,N large / K small": [
-        (8192, 1024, 8192),
-        (16384, 1024, 8192),
-    ],
-    "M small / K,N large": [
-        (1024, 8192, 8192),
-        (1024, 16384, 8192),
-    ],
-}
+
+def run_benchmark_plot(op):
+    GROUPS = {
+        "Square GEMM": [
+            # (4, 4, 4),
+            (2048, 2048, 2048),
+            (4096, 4096, 4096),
+            (8192, 8192, 8192),
+        ],
+        "M,N large / K small": [
+            (8192, 1024, 8192),
+            (16384, 1024, 8192),
+        ],
+        "M small / K,N large": [
+            (1024, 8192, 8192),
+            (1024, 16384, 8192),
+        ],
+    }
+
+    all_results = {}
+    print("\nRunning benchmarks...")
+    for group_name, shapes in tqdm(GROUPS.items(), desc="All groups"):
+        results = {
+            "torch": {"x": [], "mean": [], "min": [], "max": []},
+            "custom": {"x": [], "mean": [], "min": [], "max": []},
+        }
+
+        for M, K, N in tqdm(shapes, desc=group_name, leave=False):
+            r = benchmark_shape(op, M, K, N)
+            for impl in ("torch", "custom"):
+                results[impl]["x"].append(r["gflops"])
+                results[impl]["mean"].append(r[impl]["mean"])
+                results[impl]["min"].append(r[impl]["min"])
+                results[impl]["max"].append(r[impl]["max"])
+
+        all_results[group_name] = results
+    print("\nPlotting...")
+    plot_all_groups(all_results)
 
 
 # ===============================
@@ -185,12 +191,11 @@ GROUPS = {
 if __name__ == "__main__":
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    op = load_sgemm_op("smem_cache")
+    debug = False
+    if debug:
+        op = load_sgemm_op("smem_cache", debug=False)
+        benchmark_shape(op, 64, 64, 64)
+    else:
+        op = load_sgemm_op("rmem_cache")
+        run_benchmark_plot(op)
 
-    all_results = {}
-    print("\nRunning benchmarks...")
-    for group_name, shapes in tqdm(GROUPS.items(), desc="All groups"):
-        all_results[group_name] = benchmark_group(op, group_name, shapes)
-
-    print("\nPlotting...")
-    plot_all_groups(all_results)
