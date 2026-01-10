@@ -26,6 +26,7 @@ void sgemm_smem_cache_kernel(float* A, float* B, float* C, float alpha, float be
         for (int k = 0; k < tile_size; ++k) {
             acc += tile_a[tx + k * tile_size] * tile_b[k + ty * tile_size];
         }
+        __syncthreads();
     }
     C[tx + ty * ldc] = alpha * acc + beta * C[tx + ty * ldc];
 }

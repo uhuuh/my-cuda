@@ -1,13 +1,31 @@
 #include <cuda_runtime.h>
 
 
+template<int tile_size, int frag_size>
 __global__
-void sgemm_native_kernel(float* A, float* B, float* C, float alpha, float beta, int M, int N, int K, int lda, int ldb, int ldc) {
-    int tx = blockIdx.x * blockDim.x + threadIdx.x;
-    int ty = blockIdx.y * blockDim.y + threadIdx.y;
+void sgemm_rmem_cache_kernel(float* A, float* B, float* C, float alpha, float beta, int M, int N, int K, int lda, int ldb, int ldc) {
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    A = A + bx * tile_size;
+    B = B + by * tile_size * ldb;
+    C = C + bx * tile_size + by * tile_size * ldc;
+
+    __shared__ float tile_a[tile_size * tile_size];
+    __shared__ float tile_b[tile_size * tile_size];
     float acc = 0;
-    for (int k = 0; k < K; ++k) {
-        acc += A[tx + k * lda] * B[k + ty * ldb];
+    for (int ti = 0; ti * tile_size < K; ti += 1) {
+        tile_a[tx + ty * tile_size] = A[tx + ty * lda];
+        tile_b[tx + ty * tile_size] = B[tx + ty * ldb];
+        __syncthreads();
+
+        A += tile_size * lda;
+        B += tile_size;
+
+        for (int k = 0; k < tile_size; ++k) {
+            acc += tile_a[tx + k * tile_size] * tile_b[k + ty * tile_size];
+        }
     }
     C[tx + ty * ldc] = alpha * acc + beta * C[tx + ty * ldc];
 }
@@ -20,7 +38,8 @@ torch::Tensor launch(torch::Tensor A, torch::Tensor B) {
     TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "A and B must be 2D tensors");
     TORCH_CHECK(A.size(1) == B.size(0), "Incompatible matrix dimensions");
 
-    constexpr int tile_size = 16;
+    constexpr int tile_size = 64;
+    constexpr int frag_size = 4;
     const int M = A.size(0);
     const int K = A.size(1);
     const int N = B.size(1);
@@ -36,9 +55,9 @@ torch::Tensor launch(torch::Tensor A, torch::Tensor B) {
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
-    dim3 block(tile_size, tile_size);
     dim3 grid((N + tile_size - 1) / tile_size, (M + tile_size - 1) / tile_size);
-    sgemm_native_kernel<<<grid, block>>>(
+    dim3 block(tile_size / frag_size, tile_size);
+    sgemm_rmem_cache_kernel<tile_size, frag_size><<<grid, block>>>(
         B.data_ptr<float>(),
         A.data_ptr<float>(),
         C.data_ptr<float>(),
@@ -55,10 +74,10 @@ torch::Tensor launch(torch::Tensor A, torch::Tensor B) {
 
 // 使用TORCH_LIBRARY注册算子
 TORCH_LIBRARY(my, m) {
-    m.def("sgemm_native(Tensor A, Tensor B) -> Tensor");
+    m.def("sgemm_rmem_cache(Tensor A, Tensor B) -> Tensor");
 }
 
 // 为CUDA设备注册实现
 TORCH_LIBRARY_IMPL(my, CUDA, m) {
-    m.impl("sgemm_native", launch);
+    m.impl("sgemm_rmem_cache", launch);
 }

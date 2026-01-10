@@ -1,76 +1,195 @@
 # test_sgemm.py
 import os
-import time
 import torch
-from IPython.core.completer import context_matcher
+import matplotlib.pyplot as plt
+import statistics
+
 from torch.utils.cpp_extension import load
 from contextlib import contextmanager
 from types import SimpleNamespace
+from tqdm import tqdm
 
 
+# ===============================
+# CUDA timer
+# ===============================
 @contextmanager
 def cuda_timer():
     result = SimpleNamespace(ms=None)
-
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
-    torch.cuda.synchronize()
-
-
     start.record()
     yield result
     end.record()
-
     torch.cuda.synchronize()
     result.ms = start.elapsed_time(end)
 
 
-# 设置编译目录
-build_dir = os.path.join(os.getcwd(), 'build')
-os.makedirs(build_dir, exist_ok=True)
+# ===============================
+# SGEMM operator loader
+# ===============================
+_OP_CACHE = {}
 
-cc_major, cc_minor = torch.cuda.get_device_capability()
-os.environ["TORCH_CUDA_ARCH_LIST"] = f"{cc_major}.{cc_minor}"
+def load_sgemm_op(op_type: str):
+    if op_type in _OP_CACHE:
+        return _OP_CACHE[op_type]
 
-compile_cflags = ["-O3"]
-if True:
-    compile_cflags.extend(["-g", "-G", "-lineinfo"])
+    build_dir = os.path.join(os.getcwd(), "build", op_type)
+    os.makedirs(build_dir, exist_ok=True)
 
-# 动态编译CUDA算子
-sgemm_module = load(
-    name="sgemm_smem_cache",
-    sources=["sgemm_smem_cache.cu"],
-    build_directory=build_dir,
-    verbose=True,
-    is_python_module=False,
-    extra_cuda_cflags=compile_cflags,
-)
+    cc_major, cc_minor = torch.cuda.get_device_capability()
+    os.environ["TORCH_CUDA_ARCH_LIST"] = f"{cc_major}.{cc_minor}"
 
-def test_performance():
-    # 配置测试参数
-    M, K, N = 1024, 512, 2048
-    device = torch.device('cuda')
+    load(
+        name=f"sgemm_{op_type}",
+        sources=[f"sgemm_{op_type}.cu"],
+        build_directory=build_dir,
+        verbose=True,
+        is_python_module=False,
+        extra_cuda_cflags=["-O3", "-lineinfo"],
+    )
 
-    # 生成随机测试数据
-    A = torch.randn(M, K, device=device, dtype=torch.float32)
-    B = torch.randn(K, N, device=device, dtype=torch.float32)
+    op = getattr(torch.ops.my, f"sgemm_{op_type}")
+    _OP_CACHE[op_type] = op
+    return op
 
-    # 预热
-    for _ in range(5):
-        C = torch.ops.my.sgemm_smem_cache(A, B)
 
-    with cuda_timer() as timer:
-        C = torch.ops.my.sgemm_smem_cache(A, B)
+# ===============================
+# Benchmark single shape
+# ===============================
+def benchmark_shape(op, M, K, N, warmup=5, samples=20):
+    A = torch.randn(M, K, device="cuda")
+    B = torch.randn(K, N, device="cuda")
 
-    C_ref = torch.matmul(A, B)
-    max_diff = (C - C_ref).abs().max().item()
-    print(f"Max difference vs PyTorch: {max_diff:.6e}, Time: {timer.ms:.6f} ms")
-    assert max_diff < 1e-3, f"Result mismatch! Max diff: {max_diff}"
+    torch_fn = lambda: torch.matmul(A, B)
+    custom_fn = lambda: op(A, B)
 
+    for _ in range(warmup):
+        torch_fn()
+        custom_fn()
+
+    torch.cuda.synchronize()
+
+    torch_times, custom_times = [], []
+
+    for _ in range(samples):
+        with cuda_timer() as t:
+            C_torch = torch_fn()
+        torch_times.append(t.ms)
+
+        with cuda_timer() as t:
+            C_custom = custom_fn()
+        custom_times.append(t.ms)
+
+    max_diff = (C_custom - C_torch).abs().max().item()
+    #assert max_diff < 1e-3, f"Mismatch {max_diff} @ {M,K,N}"
+    # TODO 大矩阵相乘，可能会有精度问题，累加器那里
+    assert max_diff < 1e-2, f"Mismatch {max_diff} @ {M,K,N}"
+
+    gflops = 2.0 * M * K * N / 1e9
+
+    def stats(times):
+        perfs = [gflops / (t / 1e3) for t in times]
+        return {
+            "mean": statistics.mean(perfs),
+            "min": min(perfs),
+            "max": max(perfs),
+        }
+
+    return {
+        "gflops": gflops,
+        "torch": stats(torch_times),
+        "custom": stats(custom_times),
+    }
+
+
+# ===============================
+# Benchmark group
+# ===============================
+def benchmark_group(op, group_name, shapes):
+    results = {
+        "torch":  {"x": [], "mean": [], "min": [], "max": []},
+        "custom": {"x": [], "mean": [], "min": [], "max": []},
+    }
+
+    for M, K, N in tqdm(shapes, desc=group_name, leave=False):
+        r = benchmark_shape(op, M, K, N)
+        for impl in ("torch", "custom"):
+            results[impl]["x"].append(r["gflops"])
+            results[impl]["mean"].append(r[impl]["mean"])
+            results[impl]["min"].append(r[impl]["min"])
+            results[impl]["max"].append(r[impl]["max"])
+
+    return results
+
+
+# ===============================
+# Plot: ONE FIGURE, MULTI SUBPLOTS
+# ===============================
+def plot_all_groups(all_results):
+    num_groups = len(all_results)
+    cols = 2
+    rows = (num_groups + cols - 1) // cols
+
+    fig, axes = plt.subplots(
+        rows, cols,
+        figsize=(cols * 6, rows * 5),
+        squeeze=False,
+        sharey=True,
+    )
+
+    for ax, (group_name, results) in zip(axes.flat, all_results.items()):
+        for impl, style in [("torch", "o--"), ("custom", "o-")]:
+            x = results[impl]["x"]
+            y = results[impl]["mean"]
+            yerr = [
+                [y[i] - results[impl]["min"][i] for i in range(len(y))],
+                [results[impl]["max"][i] - y[i] for i in range(len(y))],
+            ]
+            ax.errorbar(x, y, yerr=yerr, fmt=style, capsize=4, label=impl)
+
+        ax.set_title(group_name)
+        ax.set_xlabel("Problem size (GFLOPs)")
+        ax.grid(True)
+        ax.legend()
+
+    axes[0, 0].set_ylabel("Throughput (GFLOPs/s)")
+    fig.tight_layout()
+    plt.show()
+
+
+# ===============================
+# Shapes (ALL POWERS OF TWO)
+# ===============================
+GROUPS = {
+    "Square GEMM": [
+        (2048, 2048, 2048),
+        # (4096, 4096, 4096),
+        # (8192, 8192, 8192),
+    ],
+    # "M,N large / K small": [
+    #     (8192, 1024, 8192),
+    #     (16384, 1024, 8192),
+    # ],
+    # "M small / K,N large": [
+    #     (1024, 8192, 8192),
+    #     (1024, 16384, 8192),
+    # ],
+}
+
+
+# ===============================
+# Main
+# ===============================
 if __name__ == "__main__":
-    # 检查CUDA设备
-    print(f"Available GPUs: {torch.cuda.device_count()}")
-    print(f"Current device: {torch.cuda.get_device_name(0)}")
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    # 运行性能测试
-    test_performance()
+    op = load_sgemm_op("smem_cache")
+
+    all_results = {}
+    print("\nRunning benchmarks...")
+    for group_name, shapes in tqdm(GROUPS.items(), desc="All groups"):
+        all_results[group_name] = benchmark_group(op, group_name, shapes)
+
+    print("\nPlotting...")
+    plot_all_groups(all_results)

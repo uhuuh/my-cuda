@@ -20,9 +20,21 @@ cutlass支持shape和stride, 不支持step, 因为step可以吸收到stride中
 - triton
 - tilelang
 
+- 什么参数应该设置为模板参数
+- 什么时候应该使用sync
+- rmem cache是如何实现的
+- 实际上gemm应该考虑更多细节，比如当shape不能被tile size整除，比如tile size应该是二维的
+
+
 ## 调试工具
 - Compute Sanitizer
 - cuda gdb
 - printf
+
+## 传入行主序输入，但是gemm处理列主序
+
+torch 创建tensor默认行主序
+
+tensor转置不生成新tensor，只改变view，但是is_contiguous()返回False, 因为这里的contiguous指的按行访问时连续的
 
 
