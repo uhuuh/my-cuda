@@ -47,6 +47,7 @@ def load_sgemm_op(op_type: str):
         verbose=True,
         is_python_module=False,
         extra_cuda_cflags=["-O3", "-lineinfo"],
+        # extra_cuda_cflags=["-O0", "-lineinfo", "-G", "-g"],
     )
 
     op = getattr(torch.ops.my, f"sgemm_{op_type}")
@@ -82,7 +83,6 @@ def benchmark_shape(op, M, K, N, warmup=5, samples=20):
         custom_times.append(t.ms)
 
     max_diff = (C_custom - C_torch).abs().max().item()
-    #assert max_diff < 1e-3, f"Mismatch {max_diff} @ {M,K,N}"
     # TODO 大矩阵相乘，可能会有精度问题，累加器那里
     assert max_diff < 1e-2, f"Mismatch {max_diff} @ {M,K,N}"
 
@@ -163,18 +163,19 @@ def plot_all_groups(all_results):
 # ===============================
 GROUPS = {
     "Square GEMM": [
+        # (4, 4, 4),
         (2048, 2048, 2048),
-        # (4096, 4096, 4096),
-        # (8192, 8192, 8192),
+        (4096, 4096, 4096),
+        (8192, 8192, 8192),
     ],
-    # "M,N large / K small": [
-    #     (8192, 1024, 8192),
-    #     (16384, 1024, 8192),
-    # ],
-    # "M small / K,N large": [
-    #     (1024, 8192, 8192),
-    #     (1024, 16384, 8192),
-    # ],
+    "M,N large / K small": [
+        (8192, 1024, 8192),
+        (16384, 1024, 8192),
+    ],
+    "M small / K,N large": [
+        (1024, 8192, 8192),
+        (1024, 16384, 8192),
+    ],
 }
 
 
