@@ -40,12 +40,12 @@ def load_sgemm_op(op_type: str, debug=False):
     build_root = os.path.join(os.getcwd(), "build")
     build_subdir_name = (
         f"sgemm_op={op_type}___"
-        f"debug={int(debug)}___"
+        f"debug={debug}___"
     )
     build_dir = os.path.join(build_root, build_subdir_name)
     os.makedirs(build_dir, exist_ok=True)
 
-    extra_cuda_cflags = ["-O3", "-lineinfo"] if debug else ["-O0", "-lineinfo", "-G", "-g"]
+    extra_cuda_cflags = ["-O3", "-lineinfo"] if not debug else ["-O0", "-lineinfo", "-G", "-g"]
     load(
         name=f"sgemm_{op_type}",
         sources=[f"sgemm_{op_type}.cu"],
@@ -63,7 +63,7 @@ def load_sgemm_op(op_type: str, debug=False):
 # ===============================
 # Benchmark single shape
 # ===============================
-def benchmark_shape(op, M, K, N, warmup=5, samples=20):
+def benchmark_shape(op, M, K, N, warmup=5, samples=10):
     A = torch.randn(M, K, device="cuda")
     B = torch.randn(K, N, device="cuda")
 
@@ -192,10 +192,13 @@ if __name__ == "__main__":
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     debug = False
+    op_type = "double_buffer"
+    # op_type = "rmem_cache"
+
     if debug:
-        op = load_sgemm_op("smem_cache", debug=False)
+        op = load_sgemm_op(op_type, debug)
         benchmark_shape(op, 64, 64, 64)
     else:
-        op = load_sgemm_op("rmem_cache")
+        op = load_sgemm_op(op_type, debug)
         run_benchmark_plot(op)
 
