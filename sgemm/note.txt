@@ -29,8 +29,15 @@ cutlass支持shape和stride, 不支持step, 因为step可以吸收到stride中
 - 当cuda kernel绑定torch算子时，需要引入torch头文件，由于torch头文件有很多，clion解析时非常耗时，并且没有解析完就没有语法只能提示
 - 似乎应该，将cuda kernel注册为torch算子，和输入检查部分挪到python侧，减轻c++侧的重复代码
 - 还需要看一下占用度，设置grid和block相关的内容
-- warp tiling，warp负责的shape不一样，从gmem到smem搬运的数据量也不一样，比如（1，32）就是32（由于合并访存的存在，所有warp线程都加载A中同一个元素），而（4,8）就是12。这说明从gmem到smeme的加载，除了考虑访存连续外，还是考虑合并。参考 [施工中] CUDA GEMM 理论性能分析与 kernel 优化 - 李少侠的文章 - 知乎 https://zhuanlan.zhihu.com/p/441146275
-
+- warp tiling，warp负责的shape不一样，从gmem到smem搬运的数据量也不一样，比如（1，32）就是32（由于合并访存的存在，所有warp线程都加载A中同一个元素），而（4,8）就是12。这说明从gmem到smeme的加载，除了考虑访存连续外，还是考虑合并
+一次gmem内存传输最多128B，也就是32个float，当warp中多个thread读取的数据大于128B时，先处理前面thread，如果每个thread处理连续数据范围内的一部分时，这可以保证连续的数据存取
+如果warp tile shape是（4,8），当每个thread处理8*8小块时，4个thread的8个float正好可以覆盖一次gmem传输
+参考 [施工中] CUDA GEMM 理论性能分析与 kernel 优化 - 李少侠的文章 - 知乎 https://zhuanlan.zhihu.com/p/441146275
+从smem上避免bank conflict的角度，warp的shape应该是（4,8），每个thread负责计算8*8小块。从gmem合并访存的角度，tile的shape最小的那一维度至少是32 float，因为一次gmem传输最多128B，也就是32个float
+- 为什么能找到的实现，都不满足tile的最小维度最少是32？
+- 从smem读取到rmem有bank conflict的概念，那么从gmem传输到smem有bank conflict的概念吗？---llm说没有
+- 好像一个block一般16*16个线程，一般sm中有四个子分区和最多2048个thread。这样正好可以放下8个warp，每个分区执行2个warp，warp之间勉强可以计算与访存掩盖
+- 使用`#pragma unroll`好像还挺有用的，提升了不少
 
 ## 调试工具
 - Compute Sanitizer

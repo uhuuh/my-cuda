@@ -192,12 +192,14 @@ if __name__ == "__main__":
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     debug = False
-    op_type = "double_buffer"
+    op_type = "memory_coalesce"
+    # op_type = "double_buffer"
     # op_type = "rmem_cache"
 
     if debug:
         op = load_sgemm_op(op_type, debug)
-        benchmark_shape(op, 64, 64, 64)
+        benchmark_shape(op, 512,512, 512)
+        print(">>>>>> ok!!!")
     else:
         op = load_sgemm_op(op_type, debug)
         run_benchmark_plot(op)
