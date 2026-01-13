@@ -52,6 +52,8 @@ void sgemm_memory_coalesce_kernel(float* A, float* B, float* C, float alpha, flo
     float* smem_tile_a;
     float* smem_tile_b;
     int tile_move_num = K / tile_col_size;
+    float row_vals[frag_size];
+    float col_vals[frag_size];
     #pragma unroll
     for (int tile_move_cnt = 0; tile_move_cnt < tile_move_num; tile_move_cnt += 1) {
         if (tile_move_cnt < tile_move_num - 1) {
@@ -77,10 +79,13 @@ void sgemm_memory_coalesce_kernel(float* A, float* B, float* C, float alpha, flo
             auto smem_frag_b = smem_tile_b + tile_layer_offset * tile_row_size + ty * frag_size;
             #pragma unroll
             for (int frag_x = 0; frag_x < frag_size; frag_x += 1) {
-                auto row_val = smem_frag_a[frag_x];
-                #pragma unroll
+                row_vals[frag_x] = smem_frag_a[frag_x];
+                col_vals[frag_x] = smem_frag_b[frag_x];
+            }
+            #pragma unroll
+            for (int frag_x = 0; frag_x < frag_size; frag_x += 1) {
                 for (int frag_y = 0; frag_y < frag_size; frag_y += 1) {
-                    frag_acc[frag_x + frag_y * frag_size] += row_val * smem_frag_b[frag_y];
+                    frag_acc[frag_x + frag_y * frag_size] += row_vals[frag_x] * col_vals[frag_y];
                 }
             }
         }
