@@ -55,20 +55,15 @@ void sgemm_memory_coalesce_kernel(float* A, float* B, float* C, float alpha, flo
     int tile_move_num = K / tile_col_size - 1;
     float row_vals[frag_size];
     float col_vals[frag_size];
+    float4 row_val;
+    float4 col_val;
 #pragma unroll
     for (int tile_move_cnt = 0; tile_move_cnt < tile_move_num; tile_move_cnt += 1) {
         temp_smem_a = temp_smem_a_ptrs[tile_move_cnt % 2];
         temp_smem_b = temp_smem_b_ptrs[tile_move_cnt % 2];
 
-        *temp_smem_a = reinterpret_cast<float4*>(gmem_tile_a)[tile_f4_x1 + tile_f4_y1 * (lda / 4)];
-        temp_gmem_tile_b = reinterpret_cast<float4*>(gmem_tile_b) + tile_f4_x2 + tile_f4_y2 * (ldb / 4);
-        temp_smem_b[0] = temp_gmem_tile_b->x;
-        temp_smem_b[tile_row_size] = temp_gmem_tile_b->y;
-        temp_smem_b[tile_row_size * 2] = temp_gmem_tile_b->z;
-        temp_smem_b[tile_row_size * 3] = temp_gmem_tile_b->w;
-
-        gmem_tile_a += tile_col_size * lda;
-        gmem_tile_b += tile_col_size;
+        row_val = reinterpret_cast<float4*>(gmem_tile_a)[tile_f4_x1 + tile_f4_y1 * (lda / 4)];
+        col_val = reinterpret_cast<float4*>(gmem_tile_b)[tile_f4_x2 + tile_f4_y2 * (ldb / 4)];
 
         smem_tile_a = smem_tiles_a[(tile_move_cnt + 1) % 2];
         smem_tile_b = smem_tiles_b[(tile_move_cnt + 1) % 2];
@@ -90,6 +85,15 @@ void sgemm_memory_coalesce_kernel(float* A, float* B, float* C, float alpha, flo
                 }
             }
         }
+
+        *temp_smem_a = row_val;
+        temp_smem_b[0] = col_val.x;
+        temp_smem_b[tile_row_size] = col_val.y;
+        temp_smem_b[tile_row_size * 2] = col_val.z;
+        temp_smem_b[tile_row_size * 3] = col_val.w;
+
+        gmem_tile_a += tile_col_size * lda;
+        gmem_tile_b += tile_col_size;
         __syncthreads();
     }
 
