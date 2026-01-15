@@ -18,6 +18,7 @@ def cuda_timer():
     result = SimpleNamespace(ms=None)
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
+    torch.cuda.synchronize()
     start.record()
     yield result
     end.record()
@@ -46,16 +47,15 @@ def load_sgemm_op(op_type: str, debug=False):
     os.makedirs(build_dir, exist_ok=True)
 
     extra_cuda_cflags = ["-O3", "-lineinfo"] if not debug else ["-O0", "-lineinfo", "-G", "-g"]
-    load(
+    lib = load(
         name=f"sgemm_{op_type}",
         sources=[f"sgemm_{op_type}.cu"],
         build_directory=build_dir,
         verbose=True,
-        is_python_module=False,
         extra_cuda_cflags=extra_cuda_cflags,
     )
 
-    op = getattr(torch.ops.my, f"sgemm_{op_type}")
+    op = getattr(lib, f"sgemm_{op_type}")
     _OP_CACHE[op_type] = op
     return op
 
@@ -73,8 +73,6 @@ def benchmark_shape(op, M, K, N, warmup=5, samples=10):
     for _ in range(warmup):
         torch_fn()
         custom_fn()
-
-    torch.cuda.synchronize()
 
     torch_times, custom_times = [], []
 
@@ -105,6 +103,8 @@ def benchmark_shape(op, M, K, N, warmup=5, samples=10):
         "gflops": gflops,
         "torch": stats(torch_times),
         "custom": stats(custom_times),
+        "torch_time": torch_times,
+        "custom_time": custom_times,
     }
 
 # ===============================
@@ -202,5 +202,7 @@ if __name__ == "__main__":
         print(">>>>>> ok!!!")
     else:
         op = load_sgemm_op(op_type, debug)
+        # print(benchmark_shape(op, 8192, 8192, 8192, warmup=0, samples=1))
+        # print(benchmark_shape(op, 8192, 8192, 8192, warmup=5, samples=10))
         run_benchmark_plot(op)
 
