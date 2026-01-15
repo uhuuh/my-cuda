@@ -73,12 +73,6 @@ torch::Tensor launch(torch::Tensor A, torch::Tensor B) {
     return C;
 }
 
-// 使用TORCH_LIBRARY注册算子
-TORCH_LIBRARY(my, m) {
-    m.def("sgemm_smem_cache(Tensor A, Tensor B) -> Tensor");
-}
-
-// 为CUDA设备注册实现
-TORCH_LIBRARY_IMPL(my, CUDA, m) {
-    m.impl("sgemm_smem_cache", launch);
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("sgemm_smem_cache", &launch);
 }

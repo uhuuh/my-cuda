@@ -38,6 +38,11 @@ cutlass支持shape和stride, 不支持step, 因为step可以吸收到stride中
 - 从smem读取到rmem有bank conflict的概念，那么从gmem传输到smem有bank conflict的概念吗？---llm说没有
 - 好像一个block一般16*16个线程，一般sm中有四个子分区和最多2048个thread。这样正好可以放下8个warp，每个分区执行2个warp，warp之间勉强可以计算与访存掩盖
 - 使用`#pragma unroll`好像还挺有用的，提升了不少
+- 合并访存和bank冲突，好像是都不能解决的
+- 之前是gmem->rmem->smem，将rmem到smem这一步挪到这里了。这样操作有意义吗？一个是不是说是顺序执行吗？前面gmem的加载和计算可以并行吗？然后后面设备好像支持直接从gmem到smem了。这个提升巨大
+- 写法一样，但是性能差挺多，一个点是有L1TEX存取，另外一个smem和寄存器使用了更多，导致占用度低
+- 为什么不能强制所有变量分配到寄存器上，否则就报错
+- 好像把小块移动操作去掉，直接取小块，也有一些性能提升
 
 ## 调试工具
 - Compute Sanitizer
