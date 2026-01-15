@@ -37,9 +37,6 @@ void sgemm_memory_coalesce_kernel(float* A, float* B, float* C, float alpha, flo
     smem_tiles_b[1][smem_tile_b_idx + tile_row_size * 3] = move_temp_col_val.w;
     __syncthreads();
 
-    gmem_tile_a += tile_col_size * lda; // TODO 这里或许可以优化一下
-    gmem_tile_b += tile_col_size;
-
     const int tile_move_num = K / tile_col_size - 1;
     float frag_row_vals[frag_size];
     float frag_col_vals[frag_size];
@@ -48,15 +45,17 @@ void sgemm_memory_coalesce_kernel(float* A, float* B, float* C, float alpha, flo
       	const int write_smem_idx = tile_move_cnt % 2;
         const int read_smem_idx = (tile_move_cnt + 1) % 2;
 
-        move_temp_row_val = FLOAT4(gmem_tile_a[gmem_tile_a_idx]);
-        move_temp_col_val = FLOAT4(gmem_tile_b[gmem_tile_b_idx]);
+        move_temp_row_val = FLOAT4((gmem_tile_a + tile_col_size * lda * (tile_move_cnt + 1))[gmem_tile_a_idx]);
+        move_temp_col_val = FLOAT4((gmem_tile_b + tile_col_size * (tile_move_cnt + 1))[gmem_tile_b_idx]);
 
 #pragma unroll
         for (int tile_layer_offset = 0; tile_layer_offset < tile_col_size; tile_layer_offset += 1) {
-            FLOAT4(frag_row_vals[0]) = FLOAT4((smem_tiles_a[read_smem_idx] + tile_layer_offset * tile_row_size)[tx * frag_size / 2]);
-            FLOAT4(frag_col_vals[0]) = FLOAT4((smem_tiles_b[read_smem_idx] + tile_layer_offset * tile_row_size)[ty * frag_size / 2]);
-            FLOAT4(frag_row_vals[frag_size / 2]) = FLOAT4((smem_tiles_a[read_smem_idx] + tile_layer_offset * tile_row_size)[tx * frag_size / 2 + tile_row_size / 2]);
-            FLOAT4(frag_col_vals[frag_size / 2]) = FLOAT4((smem_tiles_b[read_smem_idx] + tile_layer_offset * tile_row_size)[ty * frag_size / 2 + tile_row_size / 2]);
+            float* smem_tile_a_ptr = smem_tiles_a[read_smem_idx] + tile_layer_offset * tile_row_size;
+            float* smem_tile_b_ptr = smem_tiles_b[read_smem_idx] + tile_layer_offset * tile_row_size;
+            FLOAT4(frag_row_vals[0]) = FLOAT4(smem_tile_a_ptr[tx * frag_size / 2]);
+            FLOAT4(frag_col_vals[0]) = FLOAT4(smem_tile_b_ptr[ty * frag_size / 2]);
+            FLOAT4(frag_row_vals[frag_size / 2]) = FLOAT4(smem_tile_a_ptr[tx * frag_size / 2 + tile_row_size / 2]);
+            FLOAT4(frag_col_vals[frag_size / 2]) = FLOAT4(smem_tile_b_ptr[ty * frag_size / 2 + tile_row_size / 2]);
 
 #pragma unroll
             for (int frag_x = 0; frag_x < frag_size; frag_x += 1) {
@@ -72,18 +71,17 @@ void sgemm_memory_coalesce_kernel(float* A, float* B, float* C, float alpha, flo
         smem_tiles_b[write_smem_idx][smem_tile_b_idx + tile_row_size] = move_temp_col_val.y;
         smem_tiles_b[write_smem_idx][smem_tile_b_idx + tile_row_size * 2] = move_temp_col_val.z;
         smem_tiles_b[write_smem_idx][smem_tile_b_idx + tile_row_size * 3] = move_temp_col_val.w;
-
-        gmem_tile_a += tile_col_size * lda;
-        gmem_tile_b += tile_col_size;
         __syncthreads();
     }
 
 #pragma unroll
     for (int tile_layer_offset = 0; tile_layer_offset < tile_col_size; tile_layer_offset += 1) {
-        FLOAT4(frag_row_vals[0]) = FLOAT4((smem_tiles_a[0] + tile_layer_offset * tile_row_size)[tx * frag_size / 2]);
-        FLOAT4(frag_col_vals[0]) = FLOAT4((smem_tiles_b[0] + tile_layer_offset * tile_row_size)[ty * frag_size / 2]);
-        FLOAT4(frag_row_vals[frag_size / 2]) = FLOAT4((smem_tiles_a[0] + tile_layer_offset * tile_row_size)[tx * frag_size / 2 + tile_row_size / 2]);
-        FLOAT4(frag_col_vals[frag_size / 2]) = FLOAT4((smem_tiles_b[0] + tile_layer_offset * tile_row_size)[ty * frag_size / 2 + tile_row_size / 2]);
+        float* smem_tile_a_ptr = smem_tiles_a[0] + tile_layer_offset * tile_row_size;
+        float* smem_tile_b_ptr = smem_tiles_b[0] + tile_layer_offset * tile_row_size;
+        FLOAT4(frag_row_vals[0]) = FLOAT4(smem_tile_a_ptr[tx * frag_size / 2]);
+        FLOAT4(frag_col_vals[0]) = FLOAT4(smem_tile_b_ptr[ty * frag_size / 2]);
+        FLOAT4(frag_row_vals[frag_size / 2]) = FLOAT4(smem_tile_a_ptr[tx * frag_size / 2 + tile_row_size / 2]);
+        FLOAT4(frag_col_vals[frag_size / 2]) = FLOAT4(smem_tile_b_ptr[ty * frag_size / 2 + tile_row_size / 2]);
 
 #pragma unroll
         for (int frag_x = 0; frag_x < frag_size; frag_x += 1) {
